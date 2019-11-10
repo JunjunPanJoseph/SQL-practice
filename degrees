@@ -1,0 +1,80 @@
+#!/usr/bin/php
+<?php
+
+//
+// pg - print all PG and PG-13 movies of a given year
+//
+
+// include the common PHP code file
+require("a2.php");
+
+
+
+// PROGRAM BODY BEGINS
+
+$usage = "Usage: $argv[0] Name M N";
+$db = dbConnect(DB_CONNECTION);
+
+// Check arguments
+if (count($argv) < 4) exit("$usage\n");
+if (! (1 <= $argv[2] && $argv[2] <= $argv[3] && $argv[3] <= 6)){
+    exit ("1 <= M <= N <= 6\n");
+}
+// Get the return results
+$name = $argv[1];
+$M = $argv[2];
+$N = $argv[3];
+$q_name = <<< Q6_name
+    select Actor.name as name
+    from Actor
+    where lower(Actor.name) = lower(%s)
+Q6_name;
+$r = dbQuery($db, mkSQL($q_name, $name));
+$t =  dbNext($r);
+$name = $t[0];
+$q = <<<Q6
+with movie_list as (
+    select Acting.movie_id as id
+    from Acting, Actor
+    where Acting.actor_id = Actor.id
+        and lower(Actor.name) = lower(%s)
+)
+select Actor.name
+from Acting, Actor, movie_list
+where  movie_list.id = Acting.movie_id
+    and Acting.actor_id = Actor.id
+;
+Q6;
+$deg = 0;
+$dist = array();
+$next = array();
+$dist[$name] = 1;
+$resArray = array();
+$resArray[0] = array($name);
+while($deg < $N){
+    $curr = $resArray[$deg];
+    $currDist = $deg + 1;
+    foreach ($curr as $currName){
+        $r = dbQuery($db, mkSQL($q, $currName));
+        while ($t = dbNext($r)){
+            $newName = $t[0];
+            if (empty($dist[$newName])){
+                $dist[$newName] = 1;
+                if (empty($resArray[$currDist])){
+                    $resArray[$currDist] = array();
+                }
+                $resArray[$currDist][strtolower($newName)] = $newName;
+            }
+        }
+    }
+    ++$deg;
+}
+$nLine = 1;
+for ($i = $M; $i <= $N && !empty($resArray[$i]); ++$i){
+    ksort($resArray[$i]);
+    foreach($resArray[$i] as $curName){
+        echo "$nLine. $curName ($i)\n";
+        ++$nLine;
+    }
+}
+?>

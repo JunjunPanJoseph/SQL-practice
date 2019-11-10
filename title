@@ -1,0 +1,62 @@
+#!/usr/bin/php
+<?php
+
+//
+// pg - print all PG and PG-13 movies of a given year
+//
+
+// include the common PHP code file
+require("a2.php");
+
+
+
+// PROGRAM BODY BEGINS
+
+$usage = "Usage: $argv[0] substring";
+$db = dbConnect(DB_CONNECTION);
+
+// Check arguments
+if (count($argv) < 2) exit("$usage\n");
+
+// Get the return results
+$val = '%'.strtolower(trim($argv[1])).'%';
+$q = <<<Q2
+with agg as (
+select tmp.id as id, string_agg(tmp.genre, ',') as genre
+from (
+    select Movie.id as id, Genre.genre as genre
+    from Movie, Genre
+    where Genre.movie_id = Movie.id
+        and lower(Movie.title) like %s
+    order by Movie.id, Genre.genre
+) as tmp
+group by tmp.id
+)
+select Movie.title, Movie.year, Movie.content_rating, Rating.imdb_score, agg.genre
+from Movie LEFT JOIN agg ON agg.id = Movie.id, Rating
+where Rating.movie_id = Movie.id
+    and lower(Movie.title) like %s
+order by Movie.year, Rating.imdb_score DESC, Movie.title
+;
+Q2;
+$r = dbQuery($db, mkSQL($q, $val, $val));
+
+// Iterate through the results and print
+$i = 1;
+while ($t = dbNext($r)) {
+    echo "$i. $t[0]";
+    $argList = array();
+    for ($j = 1, $k = 0;$j <= 3 ;++$j){
+        if (!empty($t[$j])){
+            $argList[$k++] = $t[$j];
+        }
+    }
+    if (!(empty($t[1]) && empty($t[2]) && empty($t[3])))
+        echo " (".implode(", ",$argList).")";
+    if (!empty($t[4]))
+        echo " [$t[4]]";
+    echo "\n";
+    $i++;
+}
+
+?>

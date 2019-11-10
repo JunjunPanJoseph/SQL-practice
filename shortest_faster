@@ -1,0 +1,138 @@
+#!/usr/bin/php
+<?php
+
+//
+// pg - print all PG and PG-13 movies of a given year
+//
+
+// include the common PHP code file
+require("a2.php");
+
+
+
+// PROGRAM BODY BEGINS
+
+$usage = "Usage: $argv[0] Name1 Name2";
+$db = dbConnect(DB_CONNECTION);
+
+// Check arguments
+if (count($argv) < 3) exit("$usage\n");
+
+// Get the return results
+$name1 = $argv[1];
+$name2 = $argv[2];
+$q_name = <<< Q5_name
+    select Actor.name as name
+    from Actor
+    where lower(Actor.name) = lower(%s)
+Q5_name;
+$r = dbQuery($db, mkSQL($q_name, $name1));
+$t =  dbNext($r);
+$name1 = $t[0];
+$r = dbQuery($db, mkSQL($q_name, $name2));
+$t =  dbNext($r);
+$name2 = $t[0];
+$q = <<<Q5
+with movie_list as (
+    select Acting.movie_id as id
+    from Acting, Actor
+    where Acting.actor_id = Actor.id
+        and lower(Actor.name) = lower(%s)
+)
+select Movie.title, Movie.year, Actor.name
+from Movie, Acting, Actor, movie_list
+where movie_list.id = Movie.id
+    and movie_list.id = Acting.movie_id
+    and Acting.actor_id = Actor.id
+;
+Q5;
+$finish = false;
+$deg = 0;
+
+$movie_between_two = array();
+$path_1 = array();
+$next_1 = array();
+$path_1[$name1] = $name1;
+$next_1[$name1] = true;
+
+while(!$finish && $deg < 6){
+    $curr_1 = array_keys($next_1);
+    $next_1 = array();
+    foreach ($curr_1 as $currName){
+        $r = dbQuery($db, mkSQL($q, $currName));
+        //echo "currName: $currName\n";
+        while ($t = dbNext($r)){
+            //echo "$t[0] - $t[1] - $t[2]\n";
+            $newName = $t[2];
+            $movieCombine = $t[0];
+            if (!empty($t[1])){
+                $movieCombine = $movieCombine." (".$t[1].")";
+            }
+            
+            if ($newName == $name2){
+                //Find the path, stop next loop
+                //echo "Find-Ans    ";
+                $finish = true;
+            }
+            if (empty($path_1[$newName])){
+                //find a new node, record the path
+                $path_1[$newName] = array();
+                $path_1[$newName][$currName] = true;
+                //record the movie name and year
+                $nameCombine = $currName."+".$newName;
+                if (empty($movie_between_two[$nameCombine]))
+                    $movie_between_two[$nameCombine] = array();
+                $movie_between_two[$nameCombine][$movieCombine] = true;
+                //for next round
+                //echo "Add path: $nameCombine - $movieCombine\n";
+                $next_1[$newName] = true;
+            } elseif (!empty($next_1[$newName])) {
+                //if find another path to new name with same length
+                $path_1[$newName][$currName] = true;
+                $nameCombine = $currName."+".$newName;
+                if (empty($movie_between_two[$nameCombine]))
+                    $movie_between_two[$nameCombine] = array();
+                $movie_between_two[$nameCombine][$movieCombine] = true;
+                //echo "Add path: $nameCombine - $movieCombine\n";
+            }
+        }
+    }
+    ++$deg;    
+}
+$n = 0;
+$resArray = array();
+function combineRoute($currName, $currStr){
+    global $name1;
+    global $path_1;
+    global $movie_between_two;
+    global $n;
+    global $resArray;
+    if ($currName == $name1){
+        $resArray[$n++] = $currStr;
+        return;
+    }
+    foreach (array_keys($path_1[$currName]) as $newName){
+        $nameCombine = $newName."+".$currName;
+        foreach (array_keys($movie_between_two[$nameCombine]) as $movieCombine){
+            $tmpStr = $currStr;
+            if ($tmpStr != ""){
+                $tmpStr = "; ".$tmpStr;
+            }
+            $tmpStr = $newName." was in ".$movieCombine." with ".$currName.$tmpStr;
+            combineRoute($newName, $tmpStr);
+        }
+    }
+    return;
+}
+if ($finish){
+    $i = 1;
+    combineRoute($name2, "");
+    asort($resArray);
+    foreach($resArray as $line){
+        if ($line != ""){
+            echo "$i. $line\n";
+            ++$i;        
+        }
+    }
+}
+?>

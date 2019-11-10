@@ -1,0 +1,93 @@
+#!/usr/bin/php
+<?php
+
+//
+// pg - print all PG and PG-13 movies of a given year
+//
+
+// include the common PHP code file
+require("a2.php");
+
+
+
+// PROGRAM BODY BEGINS
+
+$usage = "Usage: $argv[0] Title Number";
+$db = dbConnect(DB_CONNECTION);
+
+// Check arguments
+if (count($argv) < 3) exit("$usage\n");
+if ($argv[2] < 1 || $argv[2] > 1000) exit("1 <= N <= 1000\n");
+// Get the return results
+$title = strtolower($argv[1]);
+$N = $argv[2];
+
+$q = <<<Q4
+with 
+input_id as (
+    select Movie.id as id
+    from Movie
+    where lower(Movie.title) = %s
+),
+genre_list as (
+    select Genre.genre as genre
+    from Genre, input_id
+    where input_id.id = Genre.movie_id
+),
+keyword_list as (
+    select Keyword.keyword as keyword
+    from Keyword, input_id
+    where input_id.id = Keyword.movie_id
+),
+similar_movies_genre as (
+    select Genre.movie_id as id, count(Genre.genre) as genre_n
+    from Genre, input_id, genre_list
+    where Genre.movie_id != input_id.id
+        and Genre.genre = genre_list.genre
+    group by Genre.movie_id 
+    order by genre_n DESC
+),
+limited_keyword as (
+    select Keyword.movie_id as id, Keyword.keyword as keyword
+    from Keyword, keyword_list, similar_movies_genre
+    where Keyword.keyword = keyword_list.keyword
+        and Keyword.movie_id = similar_movies_genre.id
+),
+similar_movies_keyword as (
+    select smg.id, count(limited_keyword.keyword) as keyword_n
+    from similar_movies_genre as smg LEFT JOIN limited_keyword on smg.id = limited_keyword.id
+    group by smg.id
+)  
+select Movie.title, Movie.year, smg.genre_n, smk.keyword_n,
+        Rating.imdb_score, Rating.num_voted_users
+from Movie, Rating, similar_movies_genre as smg, similar_movies_keyword as smk
+where smg.id = Movie.id
+    and smg.id = smk.id
+    and smg.id = Rating.movie_id
+order by smg.genre_n DESC, smk.keyword_n DESC,
+         Rating.imdb_score DESC, Rating.num_voted_users DESC
+limit %d
+;
+Q4;
+$r = dbQuery($db, mkSQL($q, $title, $N));
+// Iterate through the results and print
+$i = 1;
+while ($t = dbNext($r)) {
+    echo "$i. $t[0]";
+    if (!empty($t[1]))
+        echo " ($t[1])";
+    $argList = array();
+    for ($j = 2, $k = 0;$j <= 5 ;++$j){
+        if (!empty($t[$j])){
+            $argList[$k++] = $t[$j];
+        } elseif ($j == 3 && empty($t[$j])){
+            $argList[$k++] = $t[$j];
+        }
+    }
+    if (!(empty($t[2]) && empty($t[3]) && empty($t[4]) && empty($t[5])))
+        echo " [".implode(", ",$argList)."]";
+    echo "\n";
+    $i++;
+}
+
+?>

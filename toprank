@@ -1,0 +1,98 @@
+#!/usr/bin/php
+<?php
+
+//
+// pg - print all PG and PG-13 movies of a given year
+//
+
+// include the common PHP code file
+require("a2.php");
+
+
+
+// PROGRAM BODY BEGINS
+
+$usage = "Usage: $argv[0] [Genres1&Genres2&...&GenresN] K StartYear EndYear";
+$db = dbConnect(DB_CONNECTION);
+
+// Check arguments
+if (count($argv) < 4) exit("$usage\n");
+// Get the return results
+$with_str = "";
+$from_str = "";
+$where_str = "";
+$start_year = 0;
+$end_year = 0;
+$K = 0;
+if (count($argv) == 4){
+    $start_year = $argv[2];
+    $end_year = $argv[3];
+    if ($start_year > $end_year) exit("Start year > end year !\n");
+    $K = $argv[1];
+} else {
+    $genre_list = array_unique(explode("&", $argv[1]));
+    for ($i = 0; $i < count($genre_list); ++$i){
+        $genre_list[$i] = strtolower($genre_list[$i]);
+    }
+    
+    $tmp_str = "'".implode("', '", $genre_list)."'";
+    
+    $with_q = <<< WQ
+    with valid_id as (
+        select id as id
+        from (select Genre.movie_id as id, count(Genre.genre) as n
+            from Genre
+            where lower(Genre.genre) in ($tmp_str)
+            group by Genre.movie_id
+        ) as tmpList
+        where tmpList.n = %d
+    )
+WQ;
+    $with_str = mkSQL($with_q, count($genre_list));
+    $from_str = ", valid_id";
+    $where_str = "valid_id.id = Movie.id and ";
+    $start_year = $argv[3];
+    $end_year = $argv[4];
+    if ($start_year > $end_year) exit("Start year > end year !\n");
+    $K = $argv[2];
+}
+$q_1 = <<<Q3_1
+select Movie.title, Movie.year, Movie.content_rating, Movie.lang, Rating.imdb_score, Rating.num_voted_users
+from Movie, Rating
+Q3_1;
+$q_2 = <<<Q3_2
+
+    Rating.movie_id = Movie.id
+    and Movie.year is not NULL
+    and Movie.year between %d and %d
+order by Rating.imdb_score DESC, Rating.num_voted_users DESC
+limit %d
+Q3_2;
+$q = $with_str.$q_1.$from_str." where ".$where_str.$q_2;
+$r = dbQuery($db, mkSQL($q, $start_year, $end_year, $K));
+
+// Iterate through the results and print
+$i = 1;
+while ($t = dbNext($r)) {
+    echo "$i. $t[0]";
+    $argList = array();
+    for ($j = 1, $k = 0;$j <= 3 ;++$j){
+        if (!empty($t[$j])){
+            $argList[$k++] = $t[$j];
+        }
+    }
+    if (!(empty($t[1]) && empty($t[2]) && empty($t[3])))
+        echo " (".implode(", ",$argList).")";
+    $argList = array();
+    for ($j = 4, $k = 0;$j <= 5 ;++$j){
+        if (!empty($t[$j])){
+            $argList[$k++] = $t[$j];
+        }
+    }
+    if (!(empty($t[4]) && empty($t[5])))
+        echo " [".implode(", ",$argList)."]";
+    echo "\n";
+    $i++;
+}
+
+?>

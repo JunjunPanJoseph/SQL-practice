@@ -1,0 +1,241 @@
+#!/usr/bin/php
+<?php
+
+//
+// pg - print all PG and PG-13 movies of a given year
+//
+
+// include the common PHP code file
+require("a2.php");
+
+
+
+// PROGRAM BODY BEGINS
+
+$usage = "Usage: $argv[0] Name1 Name2";
+$db = dbConnect(DB_CONNECTION);
+
+// Check arguments
+if (count($argv) < 3) exit("$usage\n");
+
+
+$q = <<<Q5
+with recursive degrees as (
+        select o.id as oid, o.name as oname, a.aid as nid, n.name as nname, 1 as dist, Movie.title as title, Movie.year as year
+        from Actor o, Actor n, Movie, (
+                Acting a1
+                inner join 
+                (select movie_id as mid, actor_id as aid from Acting) a2 
+                on a1.movie_id = a2.mid  
+            ) a
+        where lower(o.name) = lower(%s)
+                and o.id = a.actor_id
+                and n.id = a.aid
+                and Movie.id = a.mid
+                and o.id != a.aid
+    union ALL
+        select a.nid as oid, a.nname as oname, a.aid as nid,Actor.name as nname, a.dist + 1 as dist, Movie.title as title, Movie.year as year
+        from Actor, Movie ,(
+                (Acting a1 
+                inner join 
+                (select movie_id as mid, actor_id as aid from Acting) a2 
+                on a1.movie_id = a2.mid ) at
+            inner join 
+                degrees
+            on 
+                degrees.nid = at.actor_id
+                and
+                degrees.dist < 3
+                and at.aid != degrees.nid
+            ) a
+        where Actor.id = a.aid
+                and Movie.id = a.mid
+)
+select distinct(degrees.*)
+from 
+    degrees, (
+    select nname as minName,  min(dist) as dist 
+    from degrees
+    group by  nname
+    ) t
+where degrees.nname = t.minName
+            and degrees.dist = t.dist
+order by degrees.dist
+;
+Q5;
+// Get the return results
+$name1 = $argv[1];
+$name2 = $argv[2];
+$q_name = <<< Q5_name
+    select Actor.name as name
+    from Actor
+    where lower(Actor.name) = lower(%s)
+Q5_name;
+$r = dbQuery($db, mkSQL($q_name, $name1));
+$t =  dbNext($r);
+$name1 = $t[0];
+$r = dbQuery($db, mkSQL($q_name, $name2));
+$t =  dbNext($r);
+$name2 = $t[0];
+
+// the old version require lots of io between database and php
+// so it is extremely slow
+$fromQuery = dbQuery($db, mkSQL($q, $name1));
+$finish = false;
+$movie_between_two = array();
+$path_1 = array();
+$path_1[$name1] = $name1;
+
+$currdist = 1;
+
+$record = array();
+while ($t = dbNext($fromQuery)){
+    //if result found - break
+    if ($t[4] != $currdist){
+        if ($finish){
+            break;
+        } else {
+            $currdist = $t[4];
+        }
+    }
+    //find the target
+
+    
+    $newName = $t[3];
+    //old name
+    $currName = $t[1];
+    $nameCombine = $currName."+".$newName;  
+    $movieCombine = $t[5];
+
+    if (!empty($t[6])){
+        $movieCombine = $movieCombine." (".$t[6].")";
+    }
+    $record[$newName] = true;
+    if ($newName == $name2){
+        //echo "find path: $nameCombine - $movieCombine\n";
+        $finish = true;
+    }
+    if (empty($path_1[$newName])){
+        $path_1[$newName] = array();
+    }
+    $path_1[$newName][$currName] = true;
+    //record the movie name and year
+    if (empty($movie_between_two[$nameCombine])){
+        $movie_between_two[$nameCombine] = array();
+    }
+    $movie_between_two[$nameCombine][$movieCombine] = true;
+
+}
+if (!$finish){
+// use the second half 
+$toQuery = dbQuery($db, mkSQL($q, $name2));
+//[title, year, name]
+//[oid, oname, nid, nname, dist, title, year]
+//  0    1          2       3        4     5       6
+$currdist = 1;
+$path_2 = array();
+$path_2[$name2] = $name2;
+
+$midPoint = array();
+$index = 0;
+while ($t = dbNext($toQuery)){
+    //if result found - break
+    if ($t[4] != $currdist){
+        if ($finish){
+            break;
+        } else {
+            $currdist = $t[4];
+        }
+    }
+    //find the target
+    $newName = $t[3];
+    //old name
+    $currName = $t[1];
+    //$nameCombine = $currName."+".$newName;
+    //reverse
+    $nameCombine = $newName."+".$currName;  
+    $movieCombine = $t[5];
+    
+    if (!empty($t[6])){
+        $movieCombine = $movieCombine." (".$t[6].")";
+    }
+
+    if (empty($path_2[$newName])){
+        $path_2[$newName] = array();
+    }
+    $path_2[$newName][$currName] = true;
+    if (!empty($record[$newName])){
+        //record the mid point
+        $midPoint[$index++] = $newName;
+        $finish = true;
+    }
+    //record the movie name and year
+    if (empty($movie_between_two[$nameCombine])){
+        $movie_between_two[$nameCombine] = array();
+    }
+    $movie_between_two[$nameCombine][$movieCombine] = true;
+}
+function mergeRoute($currName){
+    global $name2;
+    global $path_1;
+    global $path_2;
+    if ($currName == $name2){
+        return;
+    } else {
+        foreach($path_2[$currName] as $newName){
+            if (empty($path_1[$newName])){
+                $path_1[$newName] = array();
+            }
+            $path_1[$newName][$currName] = true;
+            mergeRoute($newName);
+        }
+    }
+}
+foreach ($midPoint as $currName){
+    mergeRoute($currName);
+}
+}
+
+
+$n = 0;
+$resArray = array();
+function combineRoute($currName, $currStr){
+    global $name1;
+    global $path_1;
+    global $movie_between_two;
+    global $n;
+    global $resArray;
+    if (empty($path_1[$currName])){
+        //no path
+        return;
+    }
+    if (strtolower($currName) == strtolower($name1)){
+        $resArray[$n++] = $currStr;
+        return;
+    }
+    foreach (array_keys($path_1[$currName]) as $newName){
+        $nameCombine = $newName."+".$currName;
+        foreach (array_keys($movie_between_two[$nameCombine]) as $movieCombine){
+            $tmpStr = $currStr;
+            if ($tmpStr != ""){
+                $tmpStr = "; ".$tmpStr;
+            }
+            $tmpStr = $newName." was in ".$movieCombine." with ".$currName.$tmpStr;
+            //echo "Add path: $nameCombine - $movieCombine\n";
+            combineRoute($newName, $tmpStr);
+        }
+    }
+    return;
+}
+if ($finish){
+    $i = 1;
+    combineRoute($name2, "");
+    asort($resArray);
+    foreach($resArray as $line){
+        if ($line != ""){
+            echo "$i. $line\n";
+            ++$i;        
+        }
+    }
+}
+?>
